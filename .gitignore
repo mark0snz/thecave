@@ -1,0 +1,26 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Dependencies
+node_modules
+
+# Build output
+dist
+dist-ssr
+*.local
+
+# Environment files (never commit secrets)
+.env
+.env.*
+!.env.example
+
+# Claude Code local settings (machine-local; may contain recorded commands/keys)
+.claude/settings.local.json
+
+# Editor / OS
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea
