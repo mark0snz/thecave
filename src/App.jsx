@@ -687,10 +687,14 @@ const CSS = `
   box-shadow:inset 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent);
 }
 
-@media (max-width: 720px) {
+/* Stack arenas into a single column on narrow screens AND in portrait
+   orientation (e.g. a TV rotated to portrait, or a portrait device),
+   so Red and Blue flow vertically instead of crowding side by side. */
+@media (max-width: 720px), (orientation: portrait) {
   .floor { grid-template-columns:1fr; grid-template-rows:auto; }
-  .arena, .arena.tl, .arena.tr, .arena.bc { grid-column:1; width:min(92vw,470px); }
-  .arena.bc { grid-row:auto; }
+  /* Reset BOTH column and row so all three arenas flow into one column
+     (Blue, Red, Green top-to-bottom) instead of Blue/Red sharing row 1. */
+  .arena, .arena.tl, .arena.tr, .arena.bc { grid-column:1; grid-row:auto; width:min(92vw,470px); }
 }
 @media (prefers-reduced-motion: reduce) {
   * { transition:none !important; animation:none !important; }
