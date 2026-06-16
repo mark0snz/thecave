@@ -344,7 +344,9 @@ function Controller({ onSwitch }) {
                 type="text"
                 inputMode="text"
                 autoComplete="off"
+                autoCorrect="off"
                 autoCapitalize="words"
+                spellCheck={false}
                 placeholder="Enter name"
                 value={board.arenas[arena][i]}
                 onChange={(e) => setPlayer(arena, i, e.target.value)}
@@ -371,15 +373,28 @@ function Controller({ onSwitch }) {
 
       <div className="ctrlFoot">
         {confirmClear ? (
-          <button
-            className="danger"
-            onClick={() => {
-              clearArena(arena);
-              setConfirmClear(false);
-            }}
-          >
-            Clear all {current.label} names?
-          </button>
+          <div className="clearConfirm">
+            <span className="clearConfirmText">Clear all {current.label} names?</span>
+            <div className="clearConfirmBtns">
+              <button
+                className="confirmBtn cancel"
+                aria-label="Cancel"
+                onClick={() => setConfirmClear(false)}
+              >
+                ✕
+              </button>
+              <button
+                className="confirmBtn confirm"
+                aria-label={"Clear all " + current.label + " names"}
+                onClick={() => {
+                  clearArena(arena);
+                  setConfirmClear(false);
+                }}
+              >
+                ✓
+              </button>
+            </div>
+          </div>
         ) : (
           <button className="ghost" onClick={() => setConfirmClear(true)}>
             Clear {current.label} arena
@@ -598,6 +613,15 @@ const CSS = `
 .ghost.small { font-size:.82rem; padding:8px 12px; }
 .danger { padding:12px; border-radius:12px; border:1px solid #ff5a5a; background:rgba(255,90,90,.12); color:#ff7a7a; cursor:pointer; font-weight:600; }
 .danger.small { padding:8px 14px; font-size:.82rem; }
+
+/* clear-arena confirmation: a cancel (✕) and a confirm (✓) so a mistap is reversible */
+.clearConfirm { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 8px 8px 14px; border:1px solid #ff5a5a; border-radius:12px; background:rgba(255,90,90,.10); }
+.clearConfirmText { font-size:.92rem; font-weight:600; color:var(--text); }
+.clearConfirmBtns { display:flex; gap:8px; flex:none; }
+.confirmBtn { width:44px; height:44px; border-radius:10px; font-size:1.2rem; line-height:1; cursor:pointer; display:flex; align-items:center; justify-content:center; border:1px solid var(--line); background:var(--panel); color:var(--muted); transition:color .15s ease, border-color .15s ease, background .15s ease; }
+.confirmBtn.cancel:hover { color:var(--text); border-color:#3a4859; }
+.confirmBtn.confirm { border-color:#ff5a5a; background:rgba(255,90,90,.16); color:#ff7a7a; }
+.confirmBtn.confirm:hover { background:rgba(255,90,90,.26); }
 
 .mini { display:flex; flex-direction:column; gap:12px; margin-top:6px; border-top:1px solid var(--line); padding-top:16px; }
 .miniArena { display:flex; flex-direction:column; gap:8px; background:color-mix(in srgb, var(--accent) 7%, transparent); border:1px solid color-mix(in srgb, var(--accent) 24%, var(--line)); border-radius:12px; padding:11px 12px; min-width:0; }
