@@ -373,25 +373,23 @@ function Controller({ onSwitch }) {
 
       <div className="ctrlFoot">
         {confirmClear ? (
-          <div className="clearConfirm">
+          <div className="clearConfirm" style={{ ["--accent"]: current.color }}>
             <span className="clearConfirmText">Clear all {current.label} names?</span>
             <div className="clearConfirmBtns">
               <button
-                className="confirmBtn cancel"
-                aria-label="Cancel"
+                className="confirmBtn keep"
                 onClick={() => setConfirmClear(false)}
               >
-                ✕
+                Keep
               </button>
               <button
-                className="confirmBtn confirm"
-                aria-label={"Clear all " + current.label + " names"}
+                className="confirmBtn clear"
                 onClick={() => {
                   clearArena(arena);
                   setConfirmClear(false);
                 }}
               >
-                ✓
+                Clear
               </button>
             </div>
           </div>
@@ -614,14 +612,16 @@ const CSS = `
 .danger { padding:12px; border-radius:12px; border:1px solid #ff5a5a; background:rgba(255,90,90,.12); color:#ff7a7a; cursor:pointer; font-weight:600; }
 .danger.small { padding:8px 14px; font-size:.82rem; }
 
-/* clear-arena confirmation: a cancel (✕) and a confirm (✓) so a mistap is reversible */
-.clearConfirm { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 8px 8px 14px; border:1px solid #ff5a5a; border-radius:12px; background:rgba(255,90,90,.10); }
-.clearConfirmText { font-size:.92rem; font-weight:600; color:var(--text); }
+/* clear-arena confirmation: Keep (cancel) + Clear (confirm), themed to the
+   active arena's accent so a mistap is reversible and visually consistent */
+.clearConfirm { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 8px 8px 14px; border:1px solid color-mix(in srgb, var(--accent) 45%, var(--line)); border-radius:12px; background:color-mix(in srgb, var(--accent) 10%, var(--panel)); }
+.clearConfirmText { font-size:.92rem; font-weight:600; color:var(--accent); }
 .clearConfirmBtns { display:flex; gap:8px; flex:none; }
-.confirmBtn { width:44px; height:44px; border-radius:10px; font-size:1.2rem; line-height:1; cursor:pointer; display:flex; align-items:center; justify-content:center; border:1px solid var(--line); background:var(--panel); color:var(--muted); transition:color .15s ease, border-color .15s ease, background .15s ease; }
-.confirmBtn.cancel:hover { color:var(--text); border-color:#3a4859; }
-.confirmBtn.confirm { border-color:#ff5a5a; background:rgba(255,90,90,.16); color:#ff7a7a; }
-.confirmBtn.confirm:hover { background:rgba(255,90,90,.26); }
+.confirmBtn { min-width:64px; height:44px; padding:0 16px; border-radius:10px; font-size:.92rem; font-weight:600; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:color .15s ease, border-color .15s ease, background .15s ease; }
+.confirmBtn.keep { border:1px solid var(--line); background:var(--panel); color:var(--muted); }
+.confirmBtn.keep:hover { color:var(--text); border-color:#3a4859; }
+.confirmBtn.clear { border:1px solid var(--accent); background:color-mix(in srgb, var(--accent) 22%, var(--panel)); color:var(--accent); }
+.confirmBtn.clear:hover { background:color-mix(in srgb, var(--accent) 34%, var(--panel)); }
 
 .mini { display:flex; flex-direction:column; gap:12px; margin-top:6px; border-top:1px solid var(--line); padding-top:16px; }
 .miniArena { display:flex; flex-direction:column; gap:8px; background:color-mix(in srgb, var(--accent) 7%, transparent); border:1px solid color-mix(in srgb, var(--accent) 24%, var(--line)); border-radius:12px; padding:11px 12px; min-width:0; }
