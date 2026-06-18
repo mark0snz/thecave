@@ -697,10 +697,12 @@ function Display({ onSwitch }) {
                       className={"quad" + (lit ? " flash" : "") + (claimed ? " claimed" : "")}
                       style={claimed ? { ["--owner"]: ARENA_BY_KEY[own].color } : undefined}
                     >
-                      <span className="quadNum">{p}</span>
-                      <span className={"quadName" + (name ? " has" : "")}>
-                        {name || <span className="open">Open</span>}
-                      </span>
+                      <div className="quadInner">
+                        <span className="quadNum">{p}</span>
+                        <span className={"quadName" + (name ? " has" : "")}>
+                          {name || <span className="open">Open</span>}
+                        </span>
+                      </div>
                     </div>
                   );
                 })}
@@ -918,13 +920,23 @@ const CSS = `
   background:color-mix(in srgb, var(--accent) 20%, transparent);
   box-shadow:inset 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent);
 }
-/* a pod claimed by another team: outline only, in the owning team's color */
+.quadInner {
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:.3em; width:100%; height:100%;
+}
+/* a pod claimed by another team: parent-arena tint with the owning team's
+   bordered pod nested inside (matches the controller's borrowed-pod look) */
 .quad.claimed {
-  box-shadow:inset 0 0 0 3px var(--owner);
+  background:color-mix(in srgb, var(--accent) 12%, transparent);
   border-radius:14px;
 }
+.quad.claimed .quadInner {
+  border:3px solid var(--owner);
+  border-radius:12px;
+  padding:clamp(6px,1.2vw,16px);
+}
 .quad.claimed.flash {
-  background:color-mix(in srgb, var(--owner) 18%, transparent);
+  background:color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
 /* Stack arenas into a single column on narrow screens AND in portrait
