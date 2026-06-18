@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "./supabase";
+import caveLogo from "./assets/cave-logo.png";
 
 /* ------------------------------------------------------------------ *
  * THE CAVE — Player Board (two-screen app)
@@ -237,7 +238,7 @@ function RolePicker({ onPick }) {
     <div className="screen center">
       <div className="brand">
         <span className="kicker">VR Arcade</span>
-        <h1 className="wordmark">THE CAVE</h1>
+        <img className="brandLogo" src={caveLogo} alt="The Cave" />
         <p className="sub">Set up this device</p>
       </div>
       <div className="pickRow">
@@ -280,7 +281,7 @@ function Controller({ onSwitch }) {
     <div className="screen ctrl">
       <header className="ctrlHead">
         <div className="ctrlBrand">
-          <span className="wordmarkSm">THE CAVE</span>
+          <img className="brandLogoSm" src={caveLogo} alt="The Cave" />
           <span className="role">Controller</span>
         </div>
         <div className="ctrlHeadRight">
@@ -471,7 +472,7 @@ function Display({ onSwitch }) {
       <header className="dispHead">
         <div className="dispBrand">
           <span className="kickerSm">VR Arcade</span>
-          <span className="wordmark big">THE CAVE</span>
+          <img className="brandLogoDisp" src={caveLogo} alt="The Cave" />
         </div>
         <div className="dispActions">
           <StatusChip status={status} />
@@ -563,6 +564,11 @@ const CSS = `
 .wordmarkSm { font-family:'Space Grotesk'; font-weight:700; letter-spacing:.12em; font-size:1.05rem; }
 .sub { color:var(--muted); margin:.4em 0 0; }
 .brand { display:flex; flex-direction:column; align-items:center; }
+
+/* logo image (replaces the "THE CAVE" text wordmark) */
+.brandLogo { width:min(360px, 64vw); height:auto; margin:.15em 0 .05em; display:block; }
+.brandLogoSm { height:30px; width:auto; display:block; }
+.brandLogoDisp { height:clamp(40px, 5vw, 58px); width:auto; display:block; }
 
 /* status chip */
 .chip { display:inline-flex; align-items:center; gap:.5em; font-size:.8rem; color:var(--muted); padding:.35em .7em; border:1px solid var(--line); border-radius:999px; background:rgba(255,255,255,.02); }
