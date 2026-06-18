@@ -33,11 +33,16 @@ const PHONE_ARENAS = ["blue", "red", "green"].map((k) =>
   ARENAS.find((a) => a.key === k)
 );
 
+// Quick lookup of an arena's { key, label, color } by its key.
+const ARENA_BY_KEY = Object.fromEntries(ARENAS.map((a) => [a.key, a]));
+
 const WRITE_DEBOUNCE_MS = 350;
 const GUARD_MS = 1500; // how long after a keystroke a cell counts as "being typed"
 
 const emptyBoard = () => ({
   arenas: { red: ["", "", "", ""], green: ["", "", "", ""], blue: ["", "", "", ""] },
+  // owner of each physical pod: null = belongs to its native arena, else a team key
+  owners: { red: [null, null, null, null], green: [null, null, null, null], blue: [null, null, null, null] },
 });
 
 // Fold the flat `players` rows into the board shape the UI expects.
@@ -47,13 +52,22 @@ const boardFromRows = (rows) => {
     green: ["", "", "", ""],
     blue: ["", "", "", ""],
   };
+  const owners = {
+    red: [null, null, null, null],
+    green: [null, null, null, null],
+    blue: [null, null, null, null],
+  };
   for (const r of rows || []) {
     if (arenas[r.arena] && r.slot >= 1 && r.slot <= 4) {
       arenas[r.arena][r.slot - 1] = r.name ?? "";
+      owners[r.arena][r.slot - 1] = r.owner ?? null;
     }
   }
-  return { arenas };
+  return { arenas, owners };
 };
+
+// Effective owner of a pod: its explicit owner, or its native arena.
+const ownerOf = (board, arena, i) => board.owners[arena][i] || arena;
 
 /* ----------------------------- shared sync hook ----------------------------- *
  * Supabase Realtime sync. Same return contract as the prototype
@@ -64,6 +78,14 @@ function useBoard(active) {
   const [board, setBoard] = useState(emptyBoard);
   const [status, setStatus] = useState("connecting");
   const [lastSynced, setLastSynced] = useState(null);
+
+  // Always-fresh board snapshot for callbacks that need to read current state.
+  const boardRef = useRef(board);
+  boardRef.current = board;
+
+  // Whether the `owner` column exists yet (the reconfiguration migration).
+  // Until it does, ownership is local-only (optimistic) so the UI still works.
+  const ownerColumn = useRef(true);
 
   // Typing guard: cellKey -> { value, ts } for cells the operator is editing,
   // so a write echo can't overwrite the exact cell being typed mid-keystroke.
@@ -77,9 +99,19 @@ function useBoard(active) {
 
     async function load() {
       try {
-        const { data, error } = await supabase
+        let { data, error } = await supabase
           .from("players")
-          .select("arena,slot,name");
+          .select("arena,slot,name,owner");
+        // The `owner` column may not exist yet (migration not run). Fall back
+        // to a name-only load so the board still works; ownership stays local.
+        if (error) {
+          ownerColumn.current = false;
+          ({ data, error } = await supabase
+            .from("players")
+            .select("arena,slot,name"));
+        } else {
+          ownerColumn.current = true;
+        }
         if (cancelled) return;
         if (error) {
           setStatus("error");
@@ -111,10 +143,17 @@ function useBoard(active) {
             delete editing.current[key];
           }
           setBoard((prev) => ({
+            ...prev,
             arenas: {
               ...prev.arenas,
               [row.arena]: prev.arenas[row.arena].map((v, i) =>
                 i === row.slot - 1 ? row.name ?? "" : v
+              ),
+            },
+            owners: {
+              ...prev.owners,
+              [row.arena]: prev.owners[row.arena].map((v, i) =>
+                i === row.slot - 1 ? row.owner ?? null : v
               ),
             },
           }));
@@ -166,6 +205,7 @@ function useBoard(active) {
       // Mark this cell as actively edited so realtime echoes don't clobber typing.
       editing.current[arenaKey + "-" + slot] = { value: name, ts: Date.now() };
       setBoard((prev) => ({
+        ...prev,
         arenas: {
           ...prev.arenas,
           [arenaKey]: prev.arenas[arenaKey].map((v, i) => (i === idx ? name : v)),
@@ -176,29 +216,26 @@ function useBoard(active) {
     [writeCell]
   );
 
-  const clearArena = useCallback((arenaKey) => {
-    // Optimistic local clear.
+  // Set/clear the owner of a pod (claim or release in Reconfigure mode).
+  // Applies optimistically; persists only once the `owner` column exists.
+  const setOwner = useCallback((arenaKey, idx, owner) => {
+    const slot = idx + 1;
     setBoard((prev) => ({
-      arenas: { ...prev.arenas, [arenaKey]: ["", "", "", ""] },
+      ...prev,
+      owners: {
+        ...prev.owners,
+        [arenaKey]: prev.owners[arenaKey].map((v, i) => (i === idx ? owner : v)),
+      },
     }));
-    const now = Date.now();
-    for (let slot = 1; slot <= 4; slot++) {
-      const key = arenaKey + "-" + slot;
-      // Cancel any in-flight per-cell write so it can't undo the clear.
-      if (writeTimers.current[key]) {
-        clearTimeout(writeTimers.current[key]);
-        delete writeTimers.current[key];
-      }
-      // Guard each cell against echoes of its previous name.
-      editing.current[key] = { value: "", ts: now };
-    }
+    if (!ownerColumn.current) return; // local-only until migration is run
     (async () => {
       try {
         setStatus("saving");
         const { error } = await supabase
           .from("players")
-          .update({ name: "", updated_at: new Date().toISOString() })
-          .eq("arena", arenaKey);
+          .update({ owner, updated_at: new Date().toISOString() })
+          .eq("arena", arenaKey)
+          .eq("slot", slot);
         if (error) {
           setStatus("error");
           return;
@@ -211,7 +248,61 @@ function useBoard(active) {
     })();
   }, []);
 
-  return { board, setPlayer, clearArena, status, lastSynced };
+  const clearArena = useCallback((team) => {
+    // Every pod whose effective owner is this team (native + claimed elsewhere).
+    const b = boardRef.current;
+    const cells = [];
+    for (const a of ["red", "green", "blue"]) {
+      for (let i = 0; i < 4; i++) {
+        if (ownerOf(b, a, i) === team) cells.push({ a, slot: i + 1, i });
+      }
+    }
+
+    // Optimistic local clear of those names.
+    setBoard((prev) => {
+      const arenas = {
+        red: [...prev.arenas.red],
+        green: [...prev.arenas.green],
+        blue: [...prev.arenas.blue],
+      };
+      cells.forEach(({ a, i }) => (arenas[a][i] = ""));
+      return { ...prev, arenas };
+    });
+
+    const now = Date.now();
+    cells.forEach(({ a, slot }) => {
+      const key = a + "-" + slot;
+      if (writeTimers.current[key]) {
+        clearTimeout(writeTimers.current[key]);
+        delete writeTimers.current[key];
+      }
+      editing.current[key] = { value: "", ts: now };
+    });
+
+    (async () => {
+      try {
+        setStatus("saving");
+        const upd = { name: "", updated_at: new Date().toISOString() };
+        // With ownership: clear native-unclaimed + claimed-by-this-team pods.
+        // Without it (pre-migration): just this arena's four pods.
+        const q = ownerColumn.current
+          ? supabase.from("players").update(upd)
+              .or(`and(arena.eq.${team},owner.is.null),owner.eq.${team}`)
+          : supabase.from("players").update(upd).eq("arena", team);
+        const { error } = await q;
+        if (error) {
+          setStatus("error");
+          return;
+        }
+        setStatus("live");
+        setLastSynced(Date.now());
+      } catch (e) {
+        setStatus("error");
+      }
+    })();
+  }, []);
+
+  return { board, setPlayer, setOwner, clearArena, status, lastSynced };
 }
 
 /* ----------------------------- status chip ----------------------------- */
@@ -261,13 +352,26 @@ function RolePicker({ onPick }) {
 
 /* ----------------------------- controller (phone) ----------------------------- */
 function Controller({ onSwitch }) {
-  const { board, setPlayer, clearArena, status } = useBoard(true);
+  const { board, setPlayer, setOwner, clearArena, status } = useBoard(true);
   const [arena, setArena] = useState("blue");
   const [confirmClear, setConfirmClear] = useState(false);
   const [confirmBack, setConfirmBack] = useState(false);
+  const [reconfig, setReconfig] = useState(false);
   const inputs = useRef([]);
 
   const current = ARENAS.find((a) => a.key === arena);
+
+  // Effective owner of a physical pod (explicit owner, else its native arena).
+  const ownerKeyAt = (arenaKey, i) => board.owners[arenaKey][i] || arenaKey;
+
+  // Pods this team has claimed in OTHER arenas (overflow players live here).
+  const claimedPods = [];
+  for (const a of ["red", "green", "blue"]) {
+    if (a === arena) continue;
+    board.owners[a].forEach((own, i) => {
+      if (own === arena) claimedPods.push({ a, i });
+    });
+  }
 
   const handleEnter = (playerNum) => {
     const pos = QUADS.indexOf(playerNum);
@@ -275,6 +379,70 @@ function Controller({ onSwitch }) {
     if (nextNum != null) inputs.current[nextNum - 1]?.focus();
     else inputs.current[playerNum - 1]?.blur();
   };
+
+  /* ---- Reconfigure mode: tap pods in any arena to assign them to `arena` ---- */
+  if (reconfig) {
+    return (
+      <div className="screen ctrl">
+        <header className="ctrlHead">
+          <div className="ctrlBrand">
+            <img className="brandLogoSm" src={caveLogo} alt="The Cave" />
+            <span className="role">Reconfigure</span>
+          </div>
+          <div className="ctrlHeadRight">
+            <StatusChip status={status} />
+            <button className="backBtn" onClick={() => setReconfig(false)}>
+              Done
+            </button>
+          </div>
+        </header>
+
+        <p className="reconfigHint">
+          Tap any pod to add it to the{" "}
+          <b style={{ color: current.color }}>{current.label}</b> team. Tap again to
+          release it back to its own arena.
+        </p>
+
+        <div className="reconfig">
+          {PHONE_ARENAS.map((a) => (
+            <div className="reconfigArena" key={a.key} style={{ ["--accent"]: a.color }}>
+              <span className="miniHead">
+                <span className="miniDot" />
+                {a.label} Arena
+              </span>
+              <div className="reconfigQuads">
+                {QUADS.map((p) => {
+                  const i = p - 1;
+                  const own = ownerKeyAt(a.key, i);
+                  const ownColor = ARENA_BY_KEY[own].color;
+                  const mine = own === arena;
+                  const name = board.arenas[a.key][i];
+                  return (
+                    <button
+                      key={p}
+                      className={"reconfigPod" + (mine ? " mine" : "")}
+                      style={{ ["--accent"]: a.color, ["--owner"]: ownColor }}
+                      onClick={() =>
+                        setOwner(a.key, i, mine || arena === a.key ? null : arena)
+                      }
+                    >
+                      <span className="reconfigNum">{p}</span>
+                      <span className="reconfigNm">{name || "—"}</span>
+                      {own !== a.key ? (
+                        <span className="reconfigTag" style={{ color: ownColor }}>
+                          {ARENA_BY_KEY[own].label}
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="screen ctrl">
@@ -335,9 +503,19 @@ function Controller({ onSwitch }) {
       <div className="fields" style={{ ["--accent"]: current.color }}>
         {QUADS.map((p) => {
           const i = p - 1;
+          const ownKey = board.owners[arena][i];
+          const loanedTo = ownKey && ownKey !== arena ? ownKey : null;
+          const accent = loanedTo ? ARENA_BY_KEY[loanedTo].color : current.color;
           return (
-            <label className="field" key={p}>
+            <label
+              className={"field" + (loanedTo ? " loaned" : "")}
+              key={p}
+              style={{ ["--accent"]: accent }}
+            >
               <span className="fieldNum">{p}</span>
+              {loanedTo ? (
+                <span className="fieldTag">→ {ARENA_BY_KEY[loanedTo].label}</span>
+              ) : null}
               <input
                 ref={(el) => (inputs.current[i] = el)}
                 className="input"
@@ -369,9 +547,47 @@ function Controller({ onSwitch }) {
             </label>
           );
         })}
+
+        {/* Overflow pods this team has claimed in other arenas */}
+        {claimedPods.map(({ a, i }) => (
+          <label className="field claimed" key={a + "-" + i} style={{ ["--accent"]: current.color }}>
+            <span className="fieldNum">{i + 1}</span>
+            <span className="fieldTag">{ARENA_BY_KEY[a].label}</span>
+            <input
+              className="input"
+              type="text"
+              inputMode="text"
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="words"
+              spellCheck={false}
+              placeholder="Enter name"
+              value={board.arenas[a][i]}
+              onChange={(e) => setPlayer(a, i, e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  e.currentTarget.blur();
+                }
+              }}
+            />
+            {board.arenas[a][i] ? (
+              <button
+                className="clearOne"
+                aria-label="Clear player"
+                onClick={() => setPlayer(a, i, "")}
+              >
+                ×
+              </button>
+            ) : null}
+          </label>
+        ))}
       </div>
 
       <div className="ctrlFoot">
+        <button className="ghost" onClick={() => setReconfig(true)}>
+          Reconfigure arena
+        </button>
         {confirmClear ? (
           <div className="clearConfirm" style={{ ["--accent"]: current.color }}>
             <span className="clearConfirmText">Clear all {current.label} names?</span>
@@ -409,15 +625,25 @@ function Controller({ onSwitch }) {
               {a.label} Arena
             </span>
             <div className="miniQuads">
-              {QUADS.map((p) => (
-                <span
-                  key={p}
-                  className={"miniQuad" + (board.arenas[a.key][p - 1] ? " filled" : "")}
-                >
-                  <b>{p}</b>
-                  <span className="miniNm">{board.arenas[a.key][p - 1] || "—"}</span>
-                </span>
-              ))}
+              {QUADS.map((p) => {
+                const i = p - 1;
+                const own = board.owners[a.key][i];
+                const claimed = own && own !== a.key;
+                return (
+                  <span
+                    key={p}
+                    className={
+                      "miniQuad" +
+                      (board.arenas[a.key][i] ? " filled" : "") +
+                      (claimed ? " claimed" : "")
+                    }
+                    style={claimed ? { ["--owner"]: ARENA_BY_KEY[own].color } : undefined}
+                  >
+                    <b>{p}</b>
+                    <span className="miniNm">{board.arenas[a.key][i] || "—"}</span>
+                  </span>
+                );
+              })}
             </div>
           </div>
         ))}
@@ -502,8 +728,14 @@ function Display({ onSwitch }) {
                   const idx = p - 1;
                   const name = board.arenas[key][idx];
                   const lit = flash[key + "-" + idx];
+                  const own = board.owners[key][idx];
+                  const claimed = own && own !== key;
                   return (
-                    <div key={p} className={"quad" + (lit ? " flash" : "")}>
+                    <div
+                      key={p}
+                      className={"quad" + (lit ? " flash" : "") + (claimed ? " claimed" : "")}
+                      style={claimed ? { ["--owner"]: ARENA_BY_KEY[own].color } : undefined}
+                    >
                       <span className="quadNum">{p}</span>
                       <span className={"quadName" + (name ? " has" : "")}>
                         {name || <span className="open">Open</span>}
@@ -609,6 +841,23 @@ const CSS = `
 .clearOne { position:absolute; top:6px; right:6px; width:26px; height:26px; border-radius:8px; border:none; background:transparent; color:var(--muted); font-size:1.2rem; line-height:1; cursor:pointer; }
 .clearOne:hover { color:var(--text); background:rgba(255,255,255,.06); }
 
+/* badge on loaned-away / claimed pods; .field tints itself via its --accent */
+.fieldTag { position:absolute; top:6px; left:8px; font-size:.62rem; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--accent); }
+.field.claimed { border-style:dashed; }
+
+/* reconfigure mode */
+.reconfigHint { color:var(--muted); font-size:.9rem; line-height:1.5; margin:-4px 0 2px; }
+.reconfigHint b { font-weight:700; }
+.reconfig { display:flex; flex-direction:column; gap:14px; }
+.reconfigArena { display:flex; flex-direction:column; gap:8px; }
+.reconfigQuads { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.reconfigPod { position:relative; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; min-height:74px; padding:10px; border-radius:12px; cursor:pointer; color:var(--text); background:var(--panel); border:1px solid color-mix(in srgb, var(--owner) 30%, var(--line)); box-shadow:inset 0 0 0 2px color-mix(in srgb, var(--owner) 38%, transparent); transition:box-shadow .15s ease, background .15s ease; }
+.reconfigPod.mine { background:color-mix(in srgb, var(--owner) 16%, var(--panel)); box-shadow:inset 0 0 0 2px var(--owner), 0 8px 22px -12px var(--owner); }
+.reconfigNum { font-family:'Space Grotesk'; font-weight:700; font-size:1.1rem; line-height:1; color:var(--owner); }
+.reconfigNm { font-size:.85rem; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%; }
+.reconfigPod.mine .reconfigNm { color:var(--text); }
+.reconfigTag { position:absolute; top:5px; right:7px; font-size:.6rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; }
+
 .ctrlFoot { display:flex; flex-direction:column; gap:10px; }
 .ghost { padding:12px; border-radius:12px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:.9rem; }
 .ghost:hover { color:var(--text); border-color:#3a4859; }
@@ -636,6 +885,7 @@ const CSS = `
 .miniQuad b { color:var(--accent); font-size:.78rem; flex:none; }
 .miniQuad .miniNm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .miniQuad.filled { color:var(--text); }
+.miniQuad.claimed { box-shadow:inset 0 0 0 2px var(--owner); }
 
 /* display / TV — floorplan */
 .disp { max-width:1500px; margin:0 auto; display:flex; flex-direction:column; gap:clamp(16px,2.5vw,28px); }
@@ -713,6 +963,14 @@ const CSS = `
 .quad.flash {
   background:color-mix(in srgb, var(--accent) 20%, transparent);
   box-shadow:inset 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+/* a pod claimed by another team: outline only, in the owning team's color */
+.quad.claimed {
+  box-shadow:inset 0 0 0 3px var(--owner);
+  border-radius:14px;
+}
+.quad.claimed.flash {
+  background:color-mix(in srgb, var(--owner) 18%, transparent);
 }
 
 /* Stack arenas into a single column on narrow screens AND in portrait
