@@ -615,39 +615,6 @@ function Controller({ onSwitch }) {
           </button>
         )}
       </div>
-
-      {/* live mini-board (vertical, quadrant layout) so the operator sees all three */}
-      <div className="mini">
-        {PHONE_ARENAS.map((a) => (
-          <div className="miniArena" key={a.key} style={{ ["--accent"]: a.color }}>
-            <span className="miniHead">
-              <span className="miniDot" />
-              {a.label} Arena
-            </span>
-            <div className="miniQuads">
-              {QUADS.map((p) => {
-                const i = p - 1;
-                const own = board.owners[a.key][i];
-                const claimed = own && own !== a.key;
-                return (
-                  <span
-                    key={p}
-                    className={
-                      "miniQuad" +
-                      (board.arenas[a.key][i] ? " filled" : "") +
-                      (claimed ? " claimed" : "")
-                    }
-                    style={claimed ? { ["--owner"]: ARENA_BY_KEY[own].color } : undefined}
-                  >
-                    <b>{p}</b>
-                    <span className="miniNm">{board.arenas[a.key][i] || "—"}</span>
-                  </span>
-                );
-              })}
-            </div>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
@@ -876,16 +843,9 @@ const CSS = `
 .confirmBtn.clear { border:1px solid var(--accent); background:color-mix(in srgb, var(--accent) 22%, var(--panel)); color:var(--accent); }
 .confirmBtn.clear:hover { background:color-mix(in srgb, var(--accent) 34%, var(--panel)); }
 
-.mini { display:flex; flex-direction:column; gap:12px; margin-top:6px; border-top:1px solid var(--line); padding-top:16px; }
-.miniArena { display:flex; flex-direction:column; gap:8px; background:color-mix(in srgb, var(--accent) 7%, transparent); border:1px solid color-mix(in srgb, var(--accent) 24%, var(--line)); border-radius:12px; padding:11px 12px; min-width:0; }
+/* arena header (used by the Reconfigure screen) */
 .miniHead { display:flex; align-items:center; gap:7px; font-size:.78rem; font-weight:700; color:var(--accent); letter-spacing:.05em; text-transform:uppercase; }
 .miniDot { width:9px; height:9px; border-radius:50%; background:var(--accent); box-shadow:0 0 8px var(--accent); flex:none; }
-.miniQuads { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
-.miniQuad { display:flex; align-items:baseline; gap:6px; font-size:.92rem; color:var(--muted); padding:9px 11px; border-radius:8px; background:var(--panel); min-width:0; }
-.miniQuad b { color:var(--accent); font-size:.78rem; flex:none; }
-.miniQuad .miniNm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.miniQuad.filled { color:var(--text); }
-.miniQuad.claimed { box-shadow:inset 0 0 0 2px var(--owner); }
 
 /* display / TV — floorplan */
 .disp { max-width:1500px; margin:0 auto; display:flex; flex-direction:column; gap:clamp(16px,2.5vw,28px); }
