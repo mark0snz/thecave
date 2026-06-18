@@ -355,7 +355,6 @@ function Controller({ onSwitch }) {
   const { board, setPlayer, setOwner, clearArena, status } = useBoard(true);
   const [arena, setArena] = useState("blue");
   const [confirmClear, setConfirmClear] = useState(false);
-  const [confirmBack, setConfirmBack] = useState(false);
   const [reconfig, setReconfig] = useState(false);
   const inputs = useRef([]);
 
@@ -454,28 +453,19 @@ function Controller({ onSwitch }) {
         <div className="ctrlHeadRight">
           <StatusChip status={status} />
           <button
-            className="backBtn"
-            onClick={() => setConfirmBack(true)}
-            aria-label="Back to device setup"
+            className="iconBtn"
+            onClick={onSwitch}
+            title="Exit"
+            aria-label="Exit to device setup"
           >
-            ‹ Back
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
           </button>
         </div>
       </header>
-
-      {confirmBack ? (
-        <div className="backConfirm">
-          <span>Go back to device setup?</span>
-          <div className="backConfirmBtns">
-            <button className="ghost small" onClick={() => setConfirmBack(false)}>
-              Cancel
-            </button>
-            <button className="danger small" onClick={onSwitch}>
-              Go back
-            </button>
-          </div>
-        </div>
-      ) : null}
 
       <div className="tabs">
         {PHONE_ARENAS.map((a) => {
@@ -505,16 +495,18 @@ function Controller({ onSwitch }) {
           const i = p - 1;
           const ownKey = board.owners[arena][i];
           const loanedTo = ownKey && ownKey !== arena ? ownKey : null;
-          const accent = loanedTo ? ARENA_BY_KEY[loanedTo].color : current.color;
+          const loanColor = loanedTo ? ARENA_BY_KEY[loanedTo].color : null;
           return (
             <label
               className={"field" + (loanedTo ? " loaned" : "")}
               key={p}
-              style={{ ["--accent"]: accent }}
+              style={loanedTo ? { ["--owner"]: loanColor } : undefined}
             >
               <span className="fieldNum">{p}</span>
               {loanedTo ? (
-                <span className="fieldTag">→ {ARENA_BY_KEY[loanedTo].label}</span>
+                <span className="fieldTag" style={{ color: loanColor }}>
+                  → {ARENA_BY_KEY[loanedTo].label}
+                </span>
               ) : null}
               <input
                 ref={(el) => (inputs.current[i] = el)}
@@ -550,9 +542,15 @@ function Controller({ onSwitch }) {
 
         {/* Overflow pods this team has claimed in other arenas */}
         {claimedPods.map(({ a, i }) => (
-          <label className="field claimed" key={a + "-" + i} style={{ ["--accent"]: current.color }}>
+          <label
+            className="field claimed"
+            key={a + "-" + i}
+            style={{ ["--accent"]: ARENA_BY_KEY[a].color, ["--owner"]: current.color }}
+          >
             <span className="fieldNum">{i + 1}</span>
-            <span className="fieldTag">{ARENA_BY_KEY[a].label}</span>
+            <span className="fieldTag" style={{ color: ARENA_BY_KEY[a].color }}>
+              {ARENA_BY_KEY[a].label}
+            </span>
             <input
               className="input"
               type="text"
@@ -787,8 +785,6 @@ const CSS = `
 .ctrlHeadRight { display:flex; align-items:center; gap:8px; }
 .backBtn { display:inline-flex; align-items:center; gap:3px; padding:8px 12px; border-radius:10px; border:1px solid var(--line); background:var(--panel); color:var(--muted); font-size:.85rem; font-weight:500; cursor:pointer; transition:color .15s ease, border-color .15s ease; }
 .backBtn:hover { color:var(--text); border-color:#3a4859; }
-.backConfirm { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; padding:12px 14px; border:1px solid #3a4859; border-radius:12px; background:var(--panel); font-size:.92rem; color:var(--text); margin-top:-6px; }
-.backConfirmBtns { display:flex; gap:8px; }
 .role { color:var(--muted); font-size:.78rem; letter-spacing:.04em; }
 .tabs { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
 .tab { display:flex; flex-direction:column; align-items:flex-start; gap:4px; padding:12px 12px; border-radius:12px; border:1px solid color-mix(in srgb, var(--accent) 32%, var(--line)); background:color-mix(in srgb, var(--accent) 9%, var(--panel)); color:var(--text); cursor:pointer; transition:border-color .15s ease, background .15s ease, box-shadow .15s ease; }
@@ -810,7 +806,8 @@ const CSS = `
 
 /* badge on loaned-away / claimed pods; .field tints itself via its --accent */
 .fieldTag { position:absolute; top:6px; left:8px; font-size:.62rem; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--accent); }
-.field.claimed { border-style:dashed; }
+/* borrowed pods keep their parent-arena color and get the owning team's border */
+.field.claimed, .field.loaned { box-shadow:inset 0 0 0 2px var(--owner); }
 
 /* reconfigure mode */
 .reconfigHint { color:var(--muted); font-size:.9rem; line-height:1.5; margin:-4px 0 2px; }
