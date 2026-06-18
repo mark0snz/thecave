@@ -502,31 +502,28 @@ function Controller({ onSwitch }) {
               key={p}
               style={loanedTo ? { ["--owner"]: loanColor } : undefined}
             >
-              <span className="fieldNum">{p}</span>
-              {loanedTo ? (
-                <span className="fieldTag" style={{ color: loanColor }}>
-                  → {ARENA_BY_KEY[loanedTo].label}
-                </span>
-              ) : null}
-              <input
-                ref={(el) => (inputs.current[i] = el)}
-                className="input"
-                type="text"
-                inputMode="text"
-                autoComplete="off"
-                autoCorrect="off"
-                autoCapitalize="words"
-                spellCheck={false}
-                placeholder="Enter name"
-                value={board.arenas[arena][i]}
-                onChange={(e) => setPlayer(arena, i, e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    handleEnter(p);
-                  }
-                }}
-              />
+              <div className="podInner">
+                <span className="fieldNum">{p}</span>
+                <input
+                  ref={(el) => (inputs.current[i] = el)}
+                  className="input"
+                  type="text"
+                  inputMode="text"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="words"
+                  spellCheck={false}
+                  placeholder="Enter name"
+                  value={board.arenas[arena][i]}
+                  onChange={(e) => setPlayer(arena, i, e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleEnter(p);
+                    }
+                  }}
+                />
+              </div>
               {board.arenas[arena][i] ? (
                 <button
                   className="clearOne"
@@ -547,28 +544,27 @@ function Controller({ onSwitch }) {
             key={a + "-" + i}
             style={{ ["--accent"]: ARENA_BY_KEY[a].color, ["--owner"]: current.color }}
           >
-            <span className="fieldNum">{i + 1}</span>
-            <span className="fieldTag" style={{ color: ARENA_BY_KEY[a].color }}>
-              {ARENA_BY_KEY[a].label}
-            </span>
-            <input
-              className="input"
-              type="text"
-              inputMode="text"
-              autoComplete="off"
-              autoCorrect="off"
-              autoCapitalize="words"
-              spellCheck={false}
-              placeholder="Enter name"
-              value={board.arenas[a][i]}
-              onChange={(e) => setPlayer(a, i, e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  e.currentTarget.blur();
-                }
-              }}
-            />
+            <div className="podInner">
+              <span className="fieldNum">{i + 1}</span>
+              <input
+                className="input"
+                type="text"
+                inputMode="text"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="words"
+                spellCheck={false}
+                placeholder="Enter name"
+                value={board.arenas[a][i]}
+                onChange={(e) => setPlayer(a, i, e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    e.currentTarget.blur();
+                  }
+                }}
+              />
+            </div>
             {board.arenas[a][i] ? (
               <button
                 className="clearOne"
@@ -805,9 +801,10 @@ const CSS = `
 .clearOne:hover { color:var(--text); background:rgba(255,255,255,.06); }
 
 /* badge on loaned-away / claimed pods; .field tints itself via its --accent */
-.fieldTag { position:absolute; top:6px; left:8px; font-size:.62rem; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--accent); }
-/* borrowed pods keep their parent-arena color and get the owning team's border */
-.field.claimed, .field.loaned { box-shadow:inset 0 0 0 2px var(--owner); }
+/* borrowed pods: parent-arena tint on the outer card, the owning team's
+   bordered pod nested inside (gap = the field's own padding) */
+.podInner { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; flex:1; width:100%; }
+.field.claimed .podInner, .field.loaned .podInner { border:2px solid var(--owner); border-radius:12px; padding:10px 8px; }
 
 /* reconfigure mode */
 .reconfigHint { color:var(--muted); font-size:.9rem; line-height:1.5; margin:-4px 0 2px; }
