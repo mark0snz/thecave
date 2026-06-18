@@ -237,7 +237,6 @@ function RolePicker({ onPick }) {
   return (
     <div className="screen center">
       <div className="brand">
-        <span className="kicker">VR Arcade</span>
         <img className="brandLogo" src={caveLogo} alt="The Cave" />
         <p className="sub">Set up this device</p>
       </div>
@@ -471,7 +470,6 @@ function Display({ onSwitch }) {
     <div className="screen disp">
       <header className="dispHead">
         <div className="dispBrand">
-          <span className="kickerSm">VR Arcade</span>
           <img className="brandLogoDisp" src={caveLogo} alt="The Cave" />
         </div>
         <div className="dispActions">
