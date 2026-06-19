@@ -398,7 +398,7 @@ function Controller({ onSwitch }) {
           ) : null}
         </div>
 
-        <button className="doneBtn" onClick={() => setReconfig(false)}>
+        <button className="ghost" onClick={() => setReconfig(false)}>
           Done
         </button>
 
@@ -806,10 +806,6 @@ const CSS = `
 .ghost { width:100%; padding:12px; border-radius:12px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:.9rem; }
 .ghost:hover { color:var(--text); border-color:#3a4859; }
 .manageBtn { margin-top:-6px; }
-
-/* full-width Done button on the Groups screen — kept away from the exit corner */
-.doneBtn { width:100%; padding:14px; border-radius:12px; border:1px solid #3a4859; background:#222c3a; color:var(--text); font-size:1rem; font-weight:700; cursor:pointer; transition:background .15s ease; }
-.doneBtn:hover { background:#2a3646; }
 
 /* arena header (used by the Reconfigure screen) */
 .miniHead { display:flex; align-items:center; gap:7px; font-size:.78rem; font-weight:700; color:var(--accent); letter-spacing:.05em; text-transform:uppercase; }
