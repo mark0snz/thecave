@@ -88,7 +88,7 @@ const groupPrimaryArena = (board, gid) => {
 
 /* ----------------------------- shared sync hook ----------------------------- *
  * Supabase Realtime sync. Same return contract as the prototype
- * ({ board, setPlayer, clearArena, status, lastSynced }) — only the
+ * ({ board, setPlayer, setGroup, status, lastSynced }) — only the
  * transport changed (out: window.storage + polling; in: Supabase).
  * ------------------------------------------------------------------ */
 function useBoard(active) {
@@ -260,41 +260,7 @@ function useBoard(active) {
     })();
   }, []);
 
-  const clearArena = useCallback((arenaKey) => {
-    // Optimistic local clear of this arena's four pods.
-    setBoard((prev) => ({
-      ...prev,
-      arenas: { ...prev.arenas, [arenaKey]: ["", "", "", ""] },
-    }));
-    const now = Date.now();
-    for (let slot = 1; slot <= 4; slot++) {
-      const key = arenaKey + "-" + slot;
-      if (writeTimers.current[key]) {
-        clearTimeout(writeTimers.current[key]);
-        delete writeTimers.current[key];
-      }
-      editing.current[key] = { value: "", ts: now };
-    }
-    (async () => {
-      try {
-        setStatus("saving");
-        const { error } = await supabase
-          .from("players")
-          .update({ name: "", updated_at: new Date().toISOString() })
-          .eq("arena", arenaKey);
-        if (error) {
-          setStatus("error");
-          return;
-        }
-        setStatus("live");
-        setLastSynced(Date.now());
-      } catch (e) {
-        setStatus("error");
-      }
-    })();
-  }, []);
-
-  return { board, setPlayer, setGroup, clearArena, status, lastSynced };
+  return { board, setPlayer, setGroup, status, lastSynced };
 }
 
 /* ----------------------------- status chip ----------------------------- */
@@ -344,9 +310,8 @@ function RolePicker({ onPick }) {
 
 /* ----------------------------- controller (phone) ----------------------------- */
 function Controller({ onSwitch }) {
-  const { board, setPlayer, setGroup, clearArena, status } = useBoard(true);
+  const { board, setPlayer, setGroup, status } = useBoard(true);
   const [arena, setArena] = useState("blue");
-  const [confirmClear, setConfirmClear] = useState(false);
   const [reconfig, setReconfig] = useState(false);
   const [activeGroup, setActiveGroup] = useState(1);
   const inputs = useRef([]);
@@ -395,9 +360,6 @@ function Controller({ onSwitch }) {
           </div>
           <div className="ctrlHeadRight">
             <StatusChip status={status} />
-            <button className="backBtn" onClick={() => setReconfig(false)}>
-              Done
-            </button>
           </div>
         </header>
 
@@ -435,6 +397,10 @@ function Controller({ onSwitch }) {
             </button>
           ) : null}
         </div>
+
+        <button className="doneBtn" onClick={() => setReconfig(false)}>
+          Done
+        </button>
 
         <div className="reconfig">
           {PHONE_ARENAS.map((a) => (
@@ -509,10 +475,7 @@ function Controller({ onSwitch }) {
               key={a.key}
               className={"tab" + (a.key === arena ? " on" : "")}
               style={{ ["--accent"]: a.color }}
-              onClick={() => {
-                setArena(a.key);
-                setConfirmClear(false);
-              }}
+              onClick={() => setArena(a.key)}
             >
               <span className="tabTop">
                 <span className="tabDot" />
@@ -523,6 +486,10 @@ function Controller({ onSwitch }) {
           );
         })}
       </div>
+
+      <button className="ghost manageBtn" onClick={() => setReconfig(true)}>
+        Manage groups
+      </button>
 
       <div className="fields" style={{ ["--accent"]: current.color }}>
         {QUADS.map((p) => {
@@ -611,38 +578,6 @@ function Controller({ onSwitch }) {
             ) : null}
           </label>
         ))}
-      </div>
-
-      <div className="ctrlFoot">
-        <button className="ghost" onClick={() => setReconfig(true)}>
-          Manage groups
-        </button>
-        {confirmClear ? (
-          <div className="clearConfirm" style={{ ["--accent"]: current.color }}>
-            <span className="clearConfirmText">Clear all {current.label} names?</span>
-            <div className="clearConfirmBtns">
-              <button
-                className="confirmBtn keep"
-                onClick={() => setConfirmClear(false)}
-              >
-                Keep
-              </button>
-              <button
-                className="confirmBtn clear"
-                onClick={() => {
-                  clearArena(arena);
-                  setConfirmClear(false);
-                }}
-              >
-                Clear
-              </button>
-            </div>
-          </div>
-        ) : (
-          <button className="ghost" onClick={() => setConfirmClear(true)}>
-            Clear {current.label} arena
-          </button>
-        )}
       </div>
     </div>
   );
@@ -820,8 +755,6 @@ const CSS = `
 .ctrlHead { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .ctrlBrand { display:flex; flex-direction:column; }
 .ctrlHeadRight { display:flex; align-items:center; gap:8px; }
-.backBtn { display:inline-flex; align-items:center; gap:3px; padding:8px 12px; border-radius:10px; border:1px solid var(--line); background:var(--panel); color:var(--muted); font-size:.85rem; font-weight:500; cursor:pointer; transition:color .15s ease, border-color .15s ease; }
-.backBtn:hover { color:var(--text); border-color:#3a4859; }
 .role { color:var(--muted); font-size:.78rem; letter-spacing:.04em; }
 .tabs { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
 .tab { display:flex; flex-direction:column; align-items:flex-start; gap:4px; padding:12px 12px; border-radius:12px; border:1px solid color-mix(in srgb, var(--accent) 32%, var(--line)); background:color-mix(in srgb, var(--accent) 9%, var(--panel)); color:var(--text); cursor:pointer; transition:border-color .15s ease, background .15s ease, box-shadow .15s ease; }
@@ -870,23 +803,13 @@ const CSS = `
 .reconfigPod.mine .reconfigNm { color:var(--text); }
 .reconfigTag { position:absolute; top:5px; right:7px; font-size:.6rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; }
 
-.ctrlFoot { display:flex; flex-direction:column; gap:10px; }
-.ghost { padding:12px; border-radius:12px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:.9rem; }
+.ghost { width:100%; padding:12px; border-radius:12px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:.9rem; }
 .ghost:hover { color:var(--text); border-color:#3a4859; }
-.ghost.small { font-size:.82rem; padding:8px 12px; }
-.danger { padding:12px; border-radius:12px; border:1px solid #ff5a5a; background:rgba(255,90,90,.12); color:#ff7a7a; cursor:pointer; font-weight:600; }
-.danger.small { padding:8px 14px; font-size:.82rem; }
+.manageBtn { margin-top:-6px; }
 
-/* clear-arena confirmation: Keep (cancel) + Clear (confirm), themed to the
-   active arena's accent so a mistap is reversible and visually consistent */
-.clearConfirm { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 8px 8px 14px; border:1px solid color-mix(in srgb, var(--accent) 45%, var(--line)); border-radius:12px; background:color-mix(in srgb, var(--accent) 10%, var(--panel)); }
-.clearConfirmText { font-size:.92rem; font-weight:600; color:var(--accent); }
-.clearConfirmBtns { display:flex; gap:8px; flex:none; }
-.confirmBtn { min-width:64px; height:44px; padding:0 16px; border-radius:10px; font-size:.92rem; font-weight:600; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:color .15s ease, border-color .15s ease, background .15s ease; }
-.confirmBtn.keep { border:1px solid var(--line); background:var(--panel); color:var(--muted); }
-.confirmBtn.keep:hover { color:var(--text); border-color:#3a4859; }
-.confirmBtn.clear { border:1px solid var(--accent); background:color-mix(in srgb, var(--accent) 22%, var(--panel)); color:var(--accent); }
-.confirmBtn.clear:hover { background:color-mix(in srgb, var(--accent) 34%, var(--panel)); }
+/* full-width Done button on the Groups screen — kept away from the exit corner */
+.doneBtn { width:100%; padding:14px; border-radius:12px; border:1px solid #3a4859; background:#222c3a; color:var(--text); font-size:1rem; font-weight:700; cursor:pointer; transition:background .15s ease; }
+.doneBtn:hover { background:#2a3646; }
 
 /* arena header (used by the Reconfigure screen) */
 .miniHead { display:flex; align-items:center; gap:7px; font-size:.78rem; font-weight:700; color:var(--accent); letter-spacing:.05em; text-transform:uppercase; }
