@@ -534,26 +534,28 @@ function Controller({ onSwitch }) {
               key={p}
               style={gid ? { ["--gc"]: groupColor(gid) } : undefined}
             >
-              <span className="fieldNum">{p}</span>
-              <input
-                ref={(el) => (inputs.current[i] = el)}
-                className="input"
-                type="text"
-                inputMode="text"
-                autoComplete="off"
-                autoCorrect="off"
-                autoCapitalize="words"
-                spellCheck={false}
-                placeholder="Enter name"
-                value={board.arenas[arena][i]}
-                onChange={(e) => setPlayer(arena, i, e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    handleEnter(p);
-                  }
-                }}
-              />
+              <div className="podInner">
+                <span className="fieldNum">{p}</span>
+                <input
+                  ref={(el) => (inputs.current[i] = el)}
+                  className="input"
+                  type="text"
+                  inputMode="text"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="words"
+                  spellCheck={false}
+                  placeholder="Enter name"
+                  value={board.arenas[arena][i]}
+                  onChange={(e) => setPlayer(arena, i, e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleEnter(p);
+                    }
+                  }}
+                />
+              </div>
               {board.arenas[arena][i] ? (
                 <button
                   className="clearOne"
@@ -839,13 +841,11 @@ const CSS = `
 .clearOne { position:absolute; top:6px; right:6px; width:26px; height:26px; border-radius:8px; border:none; background:transparent; color:var(--muted); font-size:1.2rem; line-height:1; cursor:pointer; }
 .clearOne:hover { color:var(--text); background:rgba(255,255,255,.06); }
 
-/* a pod in a group: a coloured border in the group's colour */
-.field.grouped { box-shadow:inset 0 0 0 2px var(--gc); }
 .fieldTag { position:absolute; top:6px; left:8px; font-size:.62rem; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--accent); }
-/* a group member pulled in from another arena: parent-arena tint on the outer
-   card, with the group's bordered pod nested inside (gap = the field padding) */
+/* a pod in a group: the group's bordered pod nested inside the card (gap = the
+   field padding). Same nested look whether the pod is native or pulled in. */
 .podInner { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; flex:1; width:100%; }
-.field.pulled .podInner { border:2px solid var(--gc); border-radius:12px; padding:10px 8px; }
+.field.grouped .podInner, .field.pulled .podInner { border:2px solid var(--gc); border-radius:12px; padding:10px 8px; }
 
 /* reconfigure mode */
 .reconfigHint { color:var(--muted); font-size:.9rem; line-height:1.5; margin:-4px 0 2px; }
