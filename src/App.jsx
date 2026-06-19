@@ -46,8 +46,6 @@ const GUARD_MS = 1500; // how long after a keystroke a cell counts as "being typ
 
 const emptyBoard = () => ({
   arenas: { red: ["", "", "", ""], green: ["", "", "", ""], blue: ["", "", "", ""] },
-  // owner of each physical pod: null = belongs to its native arena, else a team key
-  owners: { red: [null, null, null, null], green: [null, null, null, null], blue: [null, null, null, null] },
   // group of each physical pod: null = ungrouped, else a group number (1..6)
   groups: { red: [null, null, null, null], green: [null, null, null, null], blue: [null, null, null, null] },
 });
@@ -59,11 +57,6 @@ const boardFromRows = (rows) => {
     green: ["", "", "", ""],
     blue: ["", "", "", ""],
   };
-  const owners = {
-    red: [null, null, null, null],
-    green: [null, null, null, null],
-    blue: [null, null, null, null],
-  };
   const groups = {
     red: [null, null, null, null],
     green: [null, null, null, null],
@@ -72,15 +65,26 @@ const boardFromRows = (rows) => {
   for (const r of rows || []) {
     if (arenas[r.arena] && r.slot >= 1 && r.slot <= 4) {
       arenas[r.arena][r.slot - 1] = r.name ?? "";
-      owners[r.arena][r.slot - 1] = r.owner ?? null;
       groups[r.arena][r.slot - 1] = r.group_id ?? null;
     }
   }
-  return { arenas, owners, groups };
+  return { arenas, groups };
 };
 
-// Effective owner of a pod: its explicit owner, or its native arena.
-const ownerOf = (board, arena, i) => board.owners[arena][i] || arena;
+// The arena a group primarily lives in (where most of its pods are; ties broken
+// by arena order). Used to "pull" a group's stray pods into one tab.
+const ARENA_ORDER = ["blue", "red", "green"];
+const groupPrimaryArena = (board, gid) => {
+  let best = null, bestCount = -1;
+  for (const a of ARENA_ORDER) {
+    const count = board.groups[a].filter((g) => g === gid).length;
+    if (count > bestCount) {
+      bestCount = count;
+      best = a;
+    }
+  }
+  return best;
+};
 
 /* ----------------------------- shared sync hook ----------------------------- *
  * Supabase Realtime sync. Same return contract as the prototype
@@ -92,13 +96,8 @@ function useBoard(active) {
   const [status, setStatus] = useState("connecting");
   const [lastSynced, setLastSynced] = useState(null);
 
-  // Always-fresh board snapshot for callbacks that need to read current state.
-  const boardRef = useRef(board);
-  boardRef.current = board;
-
-  // Whether the `owner` / `group_id` columns exist yet (migrations). Until they
-  // do, that dimension is local-only (optimistic) so the UI still works.
-  const ownerColumn = useRef(true);
+  // Whether the `group_id` column exists yet (migration). Until it does,
+  // grouping is local-only (optimistic) so the UI still works.
   const groupColumn = useRef(true);
 
   // Typing guard: cellKey -> { value, ts } for cells the operator is editing,
@@ -113,27 +112,18 @@ function useBoard(active) {
 
     async function load() {
       try {
-        // Try the full row; fall back column-by-column if a migration hasn't
-        // been run yet, so the board still loads and that dimension stays local.
+        // Try with group_id; fall back to a name-only load if the migration
+        // hasn't been run yet, so the board still works (grouping stays local).
         let { data, error } = await supabase
           .from("players")
-          .select("arena,slot,name,owner,group_id");
+          .select("arena,slot,name,group_id");
         if (!error) {
-          ownerColumn.current = true;
           groupColumn.current = true;
         } else {
           groupColumn.current = false;
           ({ data, error } = await supabase
             .from("players")
-            .select("arena,slot,name,owner"));
-          if (!error) {
-            ownerColumn.current = true;
-          } else {
-            ownerColumn.current = false;
-            ({ data, error } = await supabase
-              .from("players")
-              .select("arena,slot,name"));
-          }
+            .select("arena,slot,name"));
         }
         if (cancelled) return;
         if (error) {
@@ -171,12 +161,6 @@ function useBoard(active) {
               ...prev.arenas,
               [row.arena]: prev.arenas[row.arena].map((v, i) =>
                 i === row.slot - 1 ? row.name ?? "" : v
-              ),
-            },
-            owners: {
-              ...prev.owners,
-              [row.arena]: prev.owners[row.arena].map((v, i) =>
-                i === row.slot - 1 ? row.owner ?? null : v
               ),
             },
             groups: {
@@ -245,38 +229,6 @@ function useBoard(active) {
     [writeCell]
   );
 
-  // Set/clear the owner of a pod (claim or release in Reconfigure mode).
-  // Applies optimistically; persists only once the `owner` column exists.
-  const setOwner = useCallback((arenaKey, idx, owner) => {
-    const slot = idx + 1;
-    setBoard((prev) => ({
-      ...prev,
-      owners: {
-        ...prev.owners,
-        [arenaKey]: prev.owners[arenaKey].map((v, i) => (i === idx ? owner : v)),
-      },
-    }));
-    if (!ownerColumn.current) return; // local-only until migration is run
-    (async () => {
-      try {
-        setStatus("saving");
-        const { error } = await supabase
-          .from("players")
-          .update({ owner, updated_at: new Date().toISOString() })
-          .eq("arena", arenaKey)
-          .eq("slot", slot);
-        if (error) {
-          setStatus("error");
-          return;
-        }
-        setStatus("live");
-        setLastSynced(Date.now());
-      } catch (e) {
-        setStatus("error");
-      }
-    })();
-  }, []);
-
   // Assign/clear a pod's group (1..6 or null) — used in Reconfigure → Groups.
   const setGroup = useCallback((arenaKey, idx, groupId) => {
     const slot = idx + 1;
@@ -308,48 +260,28 @@ function useBoard(active) {
     })();
   }, []);
 
-  const clearArena = useCallback((team) => {
-    // Every pod whose effective owner is this team (native + claimed elsewhere).
-    const b = boardRef.current;
-    const cells = [];
-    for (const a of ["red", "green", "blue"]) {
-      for (let i = 0; i < 4; i++) {
-        if (ownerOf(b, a, i) === team) cells.push({ a, slot: i + 1, i });
-      }
-    }
-
-    // Optimistic local clear of those names.
-    setBoard((prev) => {
-      const arenas = {
-        red: [...prev.arenas.red],
-        green: [...prev.arenas.green],
-        blue: [...prev.arenas.blue],
-      };
-      cells.forEach(({ a, i }) => (arenas[a][i] = ""));
-      return { ...prev, arenas };
-    });
-
+  const clearArena = useCallback((arenaKey) => {
+    // Optimistic local clear of this arena's four pods.
+    setBoard((prev) => ({
+      ...prev,
+      arenas: { ...prev.arenas, [arenaKey]: ["", "", "", ""] },
+    }));
     const now = Date.now();
-    cells.forEach(({ a, slot }) => {
-      const key = a + "-" + slot;
+    for (let slot = 1; slot <= 4; slot++) {
+      const key = arenaKey + "-" + slot;
       if (writeTimers.current[key]) {
         clearTimeout(writeTimers.current[key]);
         delete writeTimers.current[key];
       }
       editing.current[key] = { value: "", ts: now };
-    });
-
+    }
     (async () => {
       try {
         setStatus("saving");
-        const upd = { name: "", updated_at: new Date().toISOString() };
-        // With ownership: clear native-unclaimed + claimed-by-this-team pods.
-        // Without it (pre-migration): just this arena's four pods.
-        const q = ownerColumn.current
-          ? supabase.from("players").update(upd)
-              .or(`and(arena.eq.${team},owner.is.null),owner.eq.${team}`)
-          : supabase.from("players").update(upd).eq("arena", team);
-        const { error } = await q;
+        const { error } = await supabase
+          .from("players")
+          .update({ name: "", updated_at: new Date().toISOString() })
+          .eq("arena", arenaKey);
         if (error) {
           setStatus("error");
           return;
@@ -362,7 +294,7 @@ function useBoard(active) {
     })();
   }, []);
 
-  return { board, setPlayer, setOwner, setGroup, clearArena, status, lastSynced };
+  return { board, setPlayer, setGroup, clearArena, status, lastSynced };
 }
 
 /* ----------------------------- status chip ----------------------------- */
@@ -412,25 +344,22 @@ function RolePicker({ onPick }) {
 
 /* ----------------------------- controller (phone) ----------------------------- */
 function Controller({ onSwitch }) {
-  const { board, setPlayer, setOwner, setGroup, clearArena, status } = useBoard(true);
+  const { board, setPlayer, setGroup, clearArena, status } = useBoard(true);
   const [arena, setArena] = useState("blue");
   const [confirmClear, setConfirmClear] = useState(false);
   const [reconfig, setReconfig] = useState(false);
-  const [reconfigMode, setReconfigMode] = useState("arenas"); // "arenas" | "groups"
   const [activeGroup, setActiveGroup] = useState(1);
   const inputs = useRef([]);
 
   const current = ARENAS.find((a) => a.key === arena);
 
-  // Effective owner of a physical pod (explicit owner, else its native arena).
-  const ownerKeyAt = (arenaKey, i) => board.owners[arenaKey][i] || arenaKey;
-
-  // Pods this team has claimed in OTHER arenas (overflow players live here).
-  const claimedPods = [];
+  // Pods physically in OTHER arenas whose group is centred on this arena —
+  // pulled in so the operator can name the whole group from one tab.
+  const pulledPods = [];
   for (const a of ["red", "green", "blue"]) {
     if (a === arena) continue;
-    board.owners[a].forEach((own, i) => {
-      if (own === arena) claimedPods.push({ a, i });
+    board.groups[a].forEach((gid, i) => {
+      if (gid && groupPrimaryArena(board, gid) === arena) pulledPods.push({ a, i, gid });
     });
   }
 
@@ -462,7 +391,7 @@ function Controller({ onSwitch }) {
         <header className="ctrlHead">
           <div className="ctrlBrand">
             <img className="brandLogoSm" src={caveLogo} alt="The Cave" />
-            <span className="role">Reconfigure</span>
+            <span className="role">Groups</span>
           </div>
           <div className="ctrlHeadRight">
             <StatusChip status={status} />
@@ -472,65 +401,40 @@ function Controller({ onSwitch }) {
           </div>
         </header>
 
-        <div className="modeToggle">
-          <button
-            className={"modeBtn" + (reconfigMode === "arenas" ? " on" : "")}
-            onClick={() => setReconfigMode("arenas")}
-          >
-            Arenas
-          </button>
-          <button
-            className={"modeBtn" + (reconfigMode === "groups" ? " on" : "")}
-            onClick={() => setReconfigMode("groups")}
-          >
-            Groups
-          </button>
-        </div>
-
-        {reconfigMode === "arenas" ? (
-          <p className="reconfigHint">
-            Tap any pod to add it to the{" "}
-            <b style={{ color: current.color }}>{current.label}</b> team. Tap again to
-            release it back to its own arena.
-          </p>
-        ) : (
-          <>
-            <p className="reconfigHint">
-              Tap pods to add them to the active group. Tap again to remove.
-            </p>
-            <div className="groupChips">
-              {visibleGroups.map((g) => (
-                <button
-                  key={g}
-                  className={"groupChip" + (g === activeGroup ? " on" : "")}
-                  style={{ ["--gc"]: groupColor(g) }}
-                  onClick={() => setActiveGroup(g)}
+        <p className="reconfigHint">
+          Tap pods to add them to the active group. Tap again to remove.
+        </p>
+        <div className="groupChips">
+          {visibleGroups.map((g) => (
+            <button
+              key={g}
+              className={"groupChip" + (g === activeGroup ? " on" : "")}
+              style={{ ["--gc"]: groupColor(g) }}
+              onClick={() => setActiveGroup(g)}
+            >
+              <span className="groupDot" />
+              Group {g}
+              {g === activeGroup && groupsInUse.includes(g) ? (
+                <span
+                  className="groupX"
+                  role="button"
+                  aria-label={"Disband group " + g}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    disbandGroup(g);
+                  }}
                 >
-                  <span className="groupDot" />
-                  Group {g}
-                  {g === activeGroup && groupsInUse.includes(g) ? (
-                    <span
-                      className="groupX"
-                      role="button"
-                      aria-label={"Disband group " + g}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        disbandGroup(g);
-                      }}
-                    >
-                      ×
-                    </span>
-                  ) : null}
-                </button>
-              ))}
-              {nextUnused ? (
-                <button className="groupChip add" onClick={() => setActiveGroup(nextUnused)}>
-                  + Add
-                </button>
+                  ×
+                </span>
               ) : null}
-            </div>
-          </>
-        )}
+            </button>
+          ))}
+          {nextUnused ? (
+            <button className="groupChip add" onClick={() => setActiveGroup(nextUnused)}>
+              + Add
+            </button>
+          ) : null}
+        </div>
 
         <div className="reconfig">
           {PHONE_ARENAS.map((a) => (
@@ -543,29 +447,6 @@ function Controller({ onSwitch }) {
                 {QUADS.map((p) => {
                   const i = p - 1;
                   const name = board.arenas[a.key][i];
-                  if (reconfigMode === "arenas") {
-                    const own = ownerKeyAt(a.key, i);
-                    const ownColor = ARENA_BY_KEY[own].color;
-                    const mine = own === arena;
-                    return (
-                      <button
-                        key={p}
-                        className={"reconfigPod" + (mine ? " mine" : "")}
-                        style={{ ["--accent"]: a.color, ["--owner"]: ownColor }}
-                        onClick={() =>
-                          setOwner(a.key, i, mine || arena === a.key ? null : arena)
-                        }
-                      >
-                        <span className="reconfigNum">{p}</span>
-                        <span className="reconfigNm">{name || "—"}</span>
-                        {own !== a.key ? (
-                          <span className="reconfigTag" style={{ color: ownColor }}>
-                            {ARENA_BY_KEY[own].label}
-                          </span>
-                        ) : null}
-                      </button>
-                    );
-                  }
                   const gid = board.groups[a.key][i];
                   const gc = gid ? groupColor(gid) : a.color;
                   const mine = gid === activeGroup;
@@ -646,37 +527,33 @@ function Controller({ onSwitch }) {
       <div className="fields" style={{ ["--accent"]: current.color }}>
         {QUADS.map((p) => {
           const i = p - 1;
-          const ownKey = board.owners[arena][i];
-          const loanedTo = ownKey && ownKey !== arena ? ownKey : null;
-          const loanColor = loanedTo ? ARENA_BY_KEY[loanedTo].color : null;
+          const gid = board.groups[arena][i];
           return (
             <label
-              className={"field" + (loanedTo ? " loaned" : "")}
+              className={"field" + (gid ? " grouped" : "")}
               key={p}
-              style={loanedTo ? { ["--owner"]: loanColor } : undefined}
+              style={gid ? { ["--gc"]: groupColor(gid) } : undefined}
             >
-              <div className="podInner">
-                <span className="fieldNum">{p}</span>
-                <input
-                  ref={(el) => (inputs.current[i] = el)}
-                  className="input"
-                  type="text"
-                  inputMode="text"
-                  autoComplete="off"
-                  autoCorrect="off"
-                  autoCapitalize="words"
-                  spellCheck={false}
-                  placeholder="Enter name"
-                  value={board.arenas[arena][i]}
-                  onChange={(e) => setPlayer(arena, i, e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      handleEnter(p);
-                    }
-                  }}
-                />
-              </div>
+              <span className="fieldNum">{p}</span>
+              <input
+                ref={(el) => (inputs.current[i] = el)}
+                className="input"
+                type="text"
+                inputMode="text"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="words"
+                spellCheck={false}
+                placeholder="Enter name"
+                value={board.arenas[arena][i]}
+                onChange={(e) => setPlayer(arena, i, e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleEnter(p);
+                  }
+                }}
+              />
               {board.arenas[arena][i] ? (
                 <button
                   className="clearOne"
@@ -690,13 +567,16 @@ function Controller({ onSwitch }) {
           );
         })}
 
-        {/* Overflow pods this team has claimed in other arenas */}
-        {claimedPods.map(({ a, i }) => (
+        {/* Group members that physically sit in other arenas, pulled in here */}
+        {pulledPods.map(({ a, i, gid }) => (
           <label
-            className="field claimed"
+            className="field pulled"
             key={a + "-" + i}
-            style={{ ["--accent"]: ARENA_BY_KEY[a].color, ["--owner"]: current.color }}
+            style={{ ["--accent"]: ARENA_BY_KEY[a].color, ["--gc"]: groupColor(gid) }}
           >
+            <span className="fieldTag" style={{ color: ARENA_BY_KEY[a].color }}>
+              {ARENA_BY_KEY[a].label}
+            </span>
             <div className="podInner">
               <span className="fieldNum">{i + 1}</span>
               <input
@@ -733,7 +613,7 @@ function Controller({ onSwitch }) {
 
       <div className="ctrlFoot">
         <button className="ghost" onClick={() => setReconfig(true)}>
-          Reconfigure
+          Manage groups
         </button>
         {confirmClear ? (
           <div className="clearConfirm" style={{ ["--accent"]: current.color }}>
@@ -842,14 +722,12 @@ function Display({ onSwitch }) {
                   const idx = p - 1;
                   const name = board.arenas[key][idx];
                   const lit = flash[key + "-" + idx];
-                  const own = board.owners[key][idx];
-                  const claimed = own && own !== key;
                   const gid = board.groups[key][idx];
                   return (
                     <div
                       key={p}
-                      className={"quad" + (lit ? " flash" : "") + (claimed ? " claimed" : "")}
-                      style={claimed ? { ["--owner"]: ARENA_BY_KEY[own].color } : undefined}
+                      className={"quad" + (lit ? " flash" : "") + (gid ? " grouped" : "")}
+                      style={gid ? { ["--gc"]: groupColor(gid) } : undefined}
                     >
                       {gid ? (
                         <span className="groupTag" style={{ ["--gc"]: groupColor(gid) }}>
@@ -961,21 +839,18 @@ const CSS = `
 .clearOne { position:absolute; top:6px; right:6px; width:26px; height:26px; border-radius:8px; border:none; background:transparent; color:var(--muted); font-size:1.2rem; line-height:1; cursor:pointer; }
 .clearOne:hover { color:var(--text); background:rgba(255,255,255,.06); }
 
-/* badge on loaned-away / claimed pods; .field tints itself via its --accent */
-/* borrowed pods: parent-arena tint on the outer card, the owning team's
-   bordered pod nested inside (gap = the field's own padding) */
+/* a pod in a group: a coloured border in the group's colour */
+.field.grouped { box-shadow:inset 0 0 0 2px var(--gc); }
+.fieldTag { position:absolute; top:6px; left:8px; font-size:.62rem; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--accent); }
+/* a group member pulled in from another arena: parent-arena tint on the outer
+   card, with the group's bordered pod nested inside (gap = the field padding) */
 .podInner { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; flex:1; width:100%; }
-.field.claimed .podInner, .field.loaned .podInner { border:2px solid var(--owner); border-radius:12px; padding:10px 8px; }
+.field.pulled .podInner { border:2px solid var(--gc); border-radius:12px; padding:10px 8px; }
 
 /* reconfigure mode */
 .reconfigHint { color:var(--muted); font-size:.9rem; line-height:1.5; margin:-4px 0 2px; }
 .reconfigHint b { font-weight:700; }
 .reconfig { display:flex; flex-direction:column; gap:14px; }
-
-/* Arenas / Groups toggle */
-.modeToggle { display:grid; grid-template-columns:1fr 1fr; gap:6px; padding:4px; background:var(--panel); border:1px solid var(--line); border-radius:12px; }
-.modeBtn { padding:9px 12px; border-radius:9px; border:none; background:transparent; color:var(--muted); font-size:.9rem; font-weight:600; cursor:pointer; transition:background .15s ease, color .15s ease; }
-.modeBtn.on { background:#222c3a; color:var(--text); }
 
 /* group chips */
 .groupChips { display:flex; flex-wrap:wrap; gap:8px; }
@@ -1108,18 +983,17 @@ const CSS = `
   display:flex; flex-direction:column; align-items:center; justify-content:center;
   gap:.3em; width:100%; height:100%;
 }
-/* a pod claimed by another team: parent-arena tint with the owning team's
-   bordered pod nested inside (matches the controller's borrowed-pod look) */
-.quad.claimed {
+/* a grouped pod: arena tint with the group's bordered pod nested inside */
+.quad.grouped {
   background:color-mix(in srgb, var(--accent) 12%, transparent);
   border-radius:14px;
 }
-.quad.claimed .quadInner {
-  border:3px solid var(--owner);
+.quad.grouped .quadInner {
+  border:3px solid var(--gc);
   border-radius:12px;
   padding:clamp(6px,1.2vw,16px);
 }
-.quad.claimed.flash {
+.quad.grouped.flash {
   background:color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
